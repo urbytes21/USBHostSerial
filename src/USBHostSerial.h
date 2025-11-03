@@ -12,6 +12,14 @@ SPDX-License-Identifier: CC0-1.0
 
 #pragma once
 
+#ifndef USBHOSTSERIAL_BUFFERSIZE
+  #define USBHOSTSERIAL_BUFFERSIZE 256
+#endif
+
+#ifndef USBHOSTSERIAL_CDC_MODE
+  #define USBHOSTSERIAL_CDC_MODE 0
+#endif
+
 #include <cstring>  // std::memcpy
 
 #include "esp_log.h"
@@ -21,21 +29,23 @@ SPDX-License-Identifier: CC0-1.0
 #include "freertos/ringbuf.h"
 
 #include <usb/cdc_acm_host.h>
+#if !(USBHOSTSERIAL_CDC_MODE)
 #include <usb/vcp_ch34x.hpp>
 #include <usb/vcp_cp210x.hpp>
 #include <usb/vcp_ftdi.hpp>
 #include <usb/vcp.hpp>
-#include <usb/usb_host.h>
-
-#ifndef USBHOSTSERIAL_BUFFERSIZE
-  #define USBHOSTSERIAL_BUFFERSIZE 256
 #endif
+#include <usb/usb_host.h>
 
 typedef void (*USBHostSerialLoggerFunc)(const char*);
 
 class USBHostSerial {
  public:
+  #if USBHOSTSERIAL_CDC_MODE
   USBHostSerial(uint16_t vid = CDC_HOST_ANY_VID, uint16_t pid = CDC_HOST_ANY_PID);
+  #else
+  USBHostSerial();
+  #endif
   ~USBHostSerial();
 
   // true if serial-over-usb device is available eg. a device is connected
@@ -84,9 +94,10 @@ class USBHostSerial {
   StaticRingbuffer_t _rx_buf_data;
   bool _setupDone;
 
-  bool _fallback;
+  #if USBHOSTSERIAL_CDC_MODE
   uint16_t _vid;
   uint16_t _pid;
+  #endif
 
  private:
   void _setup();

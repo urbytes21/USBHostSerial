@@ -14,7 +14,11 @@ SPDX-License-Identifier: CC0-1.0
 
 using namespace esp_usb;
 
+#if USBHOSTSERIAL_CDC_MODE
 USBHostSerial::USBHostSerial(uint16_t vid, uint16_t pid)
+#else
+USBHostSerial::USBHostSerial()
+#endif
 : _host_config{}
 , _line_coding{}
 , _tx_buf_mem{}
@@ -24,9 +28,10 @@ USBHostSerial::USBHostSerial(uint16_t vid, uint16_t pid)
 , _rx_buf_handle(nullptr)
 , _rx_buf_data{}
 , _setupDone(false)
-, _fallback(false)
+#if USBHOSTSERIAL_CDC_MODE
 , _vid(vid)
 , _pid(pid)
+#endif
 , _device_disconnected_sem(nullptr)
 , _usb_lib_task_handle(nullptr)
 , _logger(nullptr) {
@@ -171,10 +176,12 @@ void USBHostSerial::_setup() {
 
   ESP_ERROR_CHECK(cdc_acm_host_install(NULL));
 
+  #if !(USBHOSTSERIAL_CDC_MODE)
   // Register VCP drivers to VCP service
   VCP::register_driver<FT23x>();
   VCP::register_driver<CP210x>();
   VCP::register_driver<CH34x>();
+  #endif
 }
 
 bool USBHostSerial::_handle_rx(const uint8_t *data, size_t data_len, void *arg) {
@@ -210,7 +217,7 @@ void USBHostSerial::_USBHostSerial_task(void *arg) {
   USBHostSerial* thisInstance = static_cast<USBHostSerial*>(arg);
   esp_err_t err = ESP_OK;  // reusable
   while (1) {
-    // try to open USB VCP device
+    // try to open USB VCP/CDC device
     const cdc_acm_host_device_config_t dev_config = {
       .connection_timeout_ms = 10,
       .out_buffer_size = USBHOSTSERIAL_BUFFERSIZE,
@@ -219,31 +226,31 @@ void USBHostSerial::_USBHostSerial_task(void *arg) {
       .data_cb = _handle_rx,
       .user_arg = thisInstance,
     };
+    #if USBHOSTSERIAL_CDC_MODE
     cdc_acm_dev_hdl_t cdc_dev = NULL;
+    err = cdc_acm_host_open(thisInstance->_vid, thisInstance->_pid, 0, &dev_config, &cdc_dev);
+    if (err != ESP_OK) {
+      continue;
+    }
+    thisInstance->_log("USB CDC device opened");
+    #else
     auto vcp = std::unique_ptr<CdcAcmDevice>(VCP::open(&dev_config));
     if (vcp == nullptr) {
-      // try to fallback to CDC
-      err = cdc_acm_host_open(thisInstance->_vid, thisInstance->_pid, 0, &dev_config, &cdc_dev);
-      if (err != ESP_OK) {
-        continue;
-      }
-      thisInstance->_fallback = true;
-      thisInstance->_log("USB CDC device opened");
-    } else {
-      thisInstance->_fallback = false;
-      thisInstance->_log("USB VCP device opened");
+      continue;
     }
+    thisInstance->_log("USB VCP device opened");
+    #endif
 
     // mark connected
     xSemaphoreTake(thisInstance->_device_disconnected_sem, portMAX_DELAY);
 
     // set line coding
     err = ESP_OK;
-    if (thisInstance->_fallback) {
-      err = cdc_acm_host_line_coding_get(cdc_dev, &(thisInstance->_line_coding));
-    } else {
-      err = vcp->line_coding_set(&(thisInstance->_line_coding));
-    }
+    #if USBHOSTSERIAL_CDC_MODE
+    err = cdc_acm_host_line_coding_get(cdc_dev, &(thisInstance->_line_coding));
+    #else
+    err = vcp->line_coding_set(&(thisInstance->_line_coding));
+    #endif
     if (err == ESP_OK) {
       thisInstance->_log("USB line coding set");
     } else {
@@ -262,11 +269,11 @@ void USBHostSerial::_USBHostSerial_task(void *arg) {
       std::size_t pxItemSize = 0;
       void *data = xRingbufferReceiveUpTo(thisInstance->_tx_buf_handle, &pxItemSize, pdMS_TO_TICKS(10), USBHOSTSERIAL_BUFFERSIZE);
       if (data) {
-        if (thisInstance->_fallback) {
-          err = cdc_acm_host_data_tx_blocking(cdc_dev, (uint8_t*)data, pxItemSize, 1000);
-        } else {
-          err = vcp->tx_blocking((uint8_t*)data, pxItemSize, 1000);
-        }
+        #if USBHOSTSERIAL_CDC_MODE
+        err = cdc_acm_host_data_tx_blocking(cdc_dev, (uint8_t*)data, pxItemSize, 1000);
+        #else
+        err = vcp->tx_blocking((uint8_t*)data, pxItemSize, 1000);
+        #endif
         if (err == ESP_OK) {
           vRingbufferReturnItem(thisInstance->_tx_buf_handle, data);
         } else {
