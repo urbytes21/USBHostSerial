@@ -118,8 +118,8 @@ uint8_t USBHostSerial::read() {
 std::size_t USBHostSerial::read(uint8_t *dest, std::size_t size) {
   std::size_t retVal = 0;
   std::size_t pxItemSize = 0;
-  while (size > pxItemSize) {
-    void *ret = xRingbufferReceiveUpTo(_rx_buf_handle, &pxItemSize, pdMS_TO_TICKS(1), size - pxItemSize);
+  while (size > retVal) {
+    void *ret = xRingbufferReceiveUpTo(_rx_buf_handle, &pxItemSize, pdMS_TO_TICKS(1), size - retVal);
     if (ret) {
       std::memcpy(dest + retVal, ret, pxItemSize);
       retVal += pxItemSize;
